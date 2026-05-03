@@ -24,7 +24,7 @@ async function getGeminiApiKey() {
   return _geminiApiKey;
 }
 
-const GEMINI_LIVE_URL = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent';
+const GEMINI_LIVE_URL = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent';
 
 let geminiWs = null;
 let geminiAudioCtx = null;
@@ -38,8 +38,8 @@ let isGeminiActive = false;
  */
 async function startGeminiLive(question, role, skill, onTranscript, onComplete) {
   const apiKey = await getGeminiApiKey();
-  if (!apiKey) {
-    throw new Error('GEMINI_API_KEY not configured. Add it to your .env file.');
+  if (!apiKey || apiKey === 'your-gemini-api-key-here') {
+    throw new Error('Gemini API key not set. Open .env and replace "your-gemini-api-key-here" with your real key from https://aistudio.google.com/apikey');
   }
 
   await stopGeminiLive();
@@ -69,7 +69,7 @@ CRITICAL RULES:
       // Send setup configuration
       geminiWs.send(JSON.stringify({
         setup: {
-          model: 'models/gemini-2.0-flash-live-001',
+          model: 'models/gemini-2.5-flash-live-001',
           generation_config: {
             response_modalities: ['AUDIO'],
             speech_config: {
