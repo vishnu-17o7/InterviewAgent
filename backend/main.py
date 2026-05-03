@@ -70,6 +70,14 @@ def health():
     return {"status": "ok"}
 
 
+@app.get("/config")
+def app_config():
+    """Return client-side configuration (non-secret values)."""
+    return {
+        "gemini_api_key": os.getenv("GEMINI_API_KEY", ""),
+    }
+
+
 @app.post("/candidate/register")
 def candidate_register(body: RegisterRequest):
     """Register a candidate by name. Returns candidate_id."""

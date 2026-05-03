@@ -14,7 +14,16 @@
      6. Backend returns next question → repeat
    ══════════════════════════════════════════════════════════════════════════ */
 
-const GEMINI_API_KEY = ''; // Set from .env or config — user provides this
+let _geminiApiKey = null;
+
+async function getGeminiApiKey() {
+  if (_geminiApiKey) return _geminiApiKey;
+  const resp = await fetch(`${window.location.origin}/config`);
+  const config = await resp.json();
+  _geminiApiKey = config.gemini_api_key;
+  return _geminiApiKey;
+}
+
 const GEMINI_LIVE_URL = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent';
 
 let geminiWs = null;
@@ -28,8 +37,9 @@ let isGeminiActive = false;
  * and is ready for the candidate's answer.
  */
 async function startGeminiLive(question, role, skill, onTranscript, onComplete) {
-  if (!GEMINI_API_KEY) {
-    throw new Error('Gemini API key not configured. Set GEMINI_API_KEY in gemini-live.js');
+  const apiKey = await getGeminiApiKey();
+  if (!apiKey) {
+    throw new Error('GEMINI_API_KEY not configured. Add it to your .env file.');
   }
 
   await stopGeminiLive();
@@ -49,7 +59,7 @@ CRITICAL RULES:
 - Do not add any other text before or after the JSON
 - Do not ask follow-up questions yourself — just evaluate and output JSON`;
 
-  const url = `${GEMINI_LIVE_URL}?key=${GEMINI_API_KEY}`;
+  const url = `${GEMINI_LIVE_URL}?key=${apiKey}`;
 
   geminiWs = new WebSocket(url);
   geminiWs.binaryType = 'arraybuffer';
