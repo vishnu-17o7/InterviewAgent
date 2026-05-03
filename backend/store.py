@@ -25,8 +25,8 @@ def get_questions_for_job(job_template_id: int) -> list[dict]:
     return db.get_questions_for_job(job_template_id)
 
 
-def create_session(candidate_id: int, job_template_id: int, skills: list[str], first_question: str) -> str:
-    return db.create_session(candidate_id, job_template_id, skills, first_question)
+def create_session(candidate_id: int, job_template_id: int, skills: list[str], first_question: str, job_description: str = "", candidate_profile: str = "") -> str:
+    return db.create_session(candidate_id, job_template_id, skills, first_question, job_description, candidate_profile)
 
 
 def get_session(session_id: str) -> dict | None:

@@ -66,6 +66,16 @@
       </div>
 
       <div class="form-group">
+        <label for="jd-input">Job Description <span class="hint">(optional)</span></label>
+        <textarea id="jd-input" rows="4" placeholder="Paste the full job description here…"></textarea>
+      </div>
+
+      <div class="form-group">
+        <label for="profile-input">Candidate Profile <span class="hint">(optional — resume or LinkedIn summary)</span></label>
+        <textarea id="profile-input" rows="4" placeholder="Paste the candidate's resume or LinkedIn summary…"></textarea>
+      </div>
+
+      <div class="form-group">
         <label for="skill-input">Skills to Cover</label>
         <div class="flex gap-8">
           <input type="text" id="skill-input" placeholder="e.g. Python, System Design…" style="flex:1" />
@@ -182,20 +192,20 @@
   <section id="summary-section">
 
     <div class="card">
-      <div class="card-title">🏆 Interview Complete</div>
+      <div class="card-title">🏆 Evaluation Report</div>
 
-      <div class="avg-score-ring" id="avg-score-ring">
-        <span class="avg-score-num" id="avg-score-num">—</span>
-        <span class="avg-score-label">avg / 10</span>
+      <div class="flex items-center justify-between mb-16 flex-wrap gap-12">
+        <div class="avg-score-ring" id="avg-score-ring">
+          <span class="avg-score-num" id="avg-score-num">—</span>
+          <span class="avg-score-label">avg / 10</span>
+        </div>
+        <div style="flex:1; min-width:200px">
+          <div class="stat-label" style="margin-bottom:4px">Recommendation</div>
+          <span class="score-badge high" id="recommendation-badge" style="font-size:0.9rem">—</span>
+        </div>
       </div>
 
-      <div class="summary-box" id="summary-text">Loading summary…</div>
-    </div>
-
-    <!-- Full history in summary -->
-    <div class="card">
-      <div class="card-title">📚 Full Transcript</div>
-      <div class="history-list" id="summary-history-list"></div>
+      <div id="summary-report"></div>
     </div>
 
     <div style="text-align: center; margin-top: 16px;">

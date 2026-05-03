@@ -31,6 +31,8 @@ const navHomeBtn      = document.getElementById('nav-home-btn');
 const navDashboardBtn = document.getElementById('nav-dashboard-btn');
 
 const roleInput    = document.getElementById('role-input');
+const jdInput      = document.getElementById('jd-input');
+const profileInput = document.getElementById('profile-input');
 const skillInput   = document.getElementById('skill-input');
 const addSkillBtn  = document.getElementById('add-skill-btn');
 const skillsTags   = document.getElementById('skills-tags');
@@ -63,8 +65,8 @@ const endBtn = document.getElementById('end-btn');
 
 const avgScoreRing    = document.getElementById('avg-score-ring');
 const avgScoreNum     = document.getElementById('avg-score-num');
-const summaryText     = document.getElementById('summary-text');
-const summaryHistList = document.getElementById('summary-history-list');
+const recommendationBadge = document.getElementById('recommendation-badge');
+const summaryReport   = document.getElementById('summary-report');
 const restartBtn      = document.getElementById('restart-btn');
 
 const toast = document.getElementById('toast');
@@ -292,16 +294,19 @@ async function submitAnswer(blob) {
     return;
   }
 
-  // Show transcript
+  // Show transcript and evaluation (skip eval for silence/clarification)
   transcriptBox.textContent = data.transcript || '(no speech detected)';
   transcriptWrap.style.display = 'block';
 
-  // Show evaluation
-  const score = data.score ?? 0;
-  scoreBadge.textContent = `${score} / 10`;
-  scoreBadge.className   = 'score-badge ' + (score >= 7 ? 'high' : score >= 4 ? 'mid' : 'low');
-  feedbackBox.textContent = data.feedback || '—';
-  evalWrap.style.display = 'block';
+  if (data.score > 0 || data.feedback) {
+    const score = data.score ?? 0;
+    scoreBadge.textContent = `${score} / 10`;
+    scoreBadge.className   = 'score-badge ' + (score >= 7 ? 'high' : score >= 4 ? 'mid' : 'low');
+    feedbackBox.textContent = data.feedback || '—';
+    evalWrap.style.display = 'block';
+  } else {
+    evalWrap.style.display = 'none';
+  }
 
   // Add to local history
   historyItems.push(data);
@@ -377,34 +382,99 @@ function finishInterview(finalData) {
   progressFill.style.width = '100%';
   progressPct.textContent  = '100%';
 
-  const allHistory = historyItems;
-  const avg = allHistory.length
-    ? Math.round(allHistory.reduce((a, h) => a + (h.score || 0), 0) / allHistory.length * 10) / 10
-    : 0;
+  const report = finalData.summary || {};
+  const overall = report.overall_score || 0;
 
-  avgScoreNum.textContent = avg;
-  const pct = (avg / 10) * 360;
+  avgScoreNum.textContent = overall;
+  const pct = (overall / 10) * 360;
   avgScoreRing.style.setProperty('--pct', `${pct}deg`);
 
-  summaryText.textContent = finalData.summary || 'Great effort! Review your scores above.';
+  // Recommendation badge
+  const rec = report.recommendation || '—';
+  recommendationBadge.textContent = rec;
+  recommendationBadge.className = 'score-badge ' +
+    (rec.toLowerCase().includes('advance') ? 'high' :
+     rec.toLowerCase().includes('decline') ? 'low' : 'mid');
 
-  // Build full history in summary
-  summaryHistList.innerHTML = '';
-  allHistory.forEach(data => {
-    const score = data.score ?? 0;
-    const div = document.createElement('div');
-    div.className = 'history-item';
-    div.innerHTML = `
-      <div class="history-item-header">
-        <span class="text-muted mono">${escapeHtml(data.skill || '')}</span>
-        <span class="score-badge ${score >= 7 ? 'high' : score >= 4 ? 'mid' : 'low'}">${score} / 10</span>
-      </div>
-      <div class="history-q">❓ ${escapeHtml(data.question || '')}</div>
-      <div class="history-a">💬 ${escapeHtml(data.transcript || '')}</div>
-      <div class="history-feedback">📌 ${escapeHtml(data.feedback || '')}</div>
-    `;
-    summaryHistList.appendChild(div);
-  });
+  // Render structured report
+  let html = '';
+
+  if (report.strengths && report.strengths.length) {
+    html += '<div class="card-title" style="margin-top:16px">✅ Strengths</div>';
+    report.strengths.forEach(s => {
+      html += `<div class="history-item" style="border-left:3px solid var(--green)">
+        <div class="flex items-center justify-between mb-8 flex-wrap gap-8">
+          <span class="text-muted mono">${escapeHtml(s.skill || '')}</span>
+          <span class="score-badge high">${s.score || '—'}/10</span>
+        </div>
+        <div class="history-feedback">💬 ${escapeHtml(s.evidence || '')}</div>
+      </div>`;
+    });
+  }
+
+  if (report.weaknesses && report.weaknesses.length) {
+    html += '<div class="card-title" style="margin-top:16px">⚠️ Weaknesses</div>';
+    report.weaknesses.forEach(w => {
+      html += `<div class="history-item" style="border-left:3px solid var(--red)">
+        <div class="flex items-center justify-between mb-8 flex-wrap gap-8">
+          <span class="text-muted mono">${escapeHtml(w.skill || '')}</span>
+          <span class="score-badge low">${w.score || '—'}/10</span>
+        </div>
+        <div class="history-feedback">💬 ${escapeHtml(w.evidence || '')}</div>
+        ${w.gap ? `<div style="margin-top:6px;font-size:0.78rem;color:var(--red)">Gap: ${escapeHtml(w.gap)}</div>` : ''}
+      </div>`;
+    });
+  }
+
+  if (report.skill_breakdown && report.skill_breakdown.length) {
+    html += '<div class="card-title" style="margin-top:16px">📊 Skill Breakdown</div>';
+    html += '<div class="flex gap-12 flex-wrap">';
+    report.skill_breakdown.forEach(sb => {
+      html += `<div class="stat-card" style="min-width:100px">
+        <div class="stat-num" style="font-size:1.2rem">${sb.avg_score || '—'}</div>
+        <div class="stat-label">${escapeHtml(sb.skill || '')} (${sb.questions_asked || 0}q)</div>
+      </div>`;
+    });
+    html += '</div>';
+  }
+
+  if (report.notable_quotes && report.notable_quotes.length) {
+    html += '<div class="card-title" style="margin-top:16px">💎 Notable Quotes</div>';
+    report.notable_quotes.forEach(nq => {
+      html += `<div class="history-item" style="border-left:3px solid var(--accent2)">
+        <div class="text-muted" style="font-size:0.72rem;margin-bottom:4px">${escapeHtml(nq.context || '')}</div>
+        <div style="font-style:italic">"${escapeHtml(nq.quote || '')}"</div>
+      </div>`;
+    });
+  }
+
+  if (report.follow_up_suggestions && report.follow_up_suggestions.length) {
+    html += '<div class="card-title" style="margin-top:16px">🔍 Follow-up Suggestions</div>';
+    html += '<ul style="color:var(--muted);padding-left:18px;font-size:0.85rem;line-height:1.8">';
+    report.follow_up_suggestions.forEach(s => { html += `<li>${escapeHtml(s)}</li>`; });
+    html += '</ul>';
+  }
+
+  // Fallback: if no structured report, show old-style history
+  if (!report.strengths && !report.weaknesses && !report.skill_breakdown) {
+    html += '<div class="card-title" style="margin-top:16px">📚 Full Transcript</div>';
+    html += '<div class="history-list">';
+    historyItems.forEach(data => {
+      const score = data.score ?? 0;
+      html += `<div class="history-item">
+        <div class="history-item-header">
+          <span class="text-muted mono">${escapeHtml(data.skill || '')}</span>
+          <span class="score-badge ${score >= 7 ? 'high' : score >= 4 ? 'mid' : 'low'}">${score} / 10</span>
+        </div>
+        <div class="history-q">❓ ${escapeHtml(data.question || '')}</div>
+        <div class="history-a">💬 ${escapeHtml(data.transcript || '')}</div>
+        <div class="history-feedback">📌 ${escapeHtml(data.feedback || '')}</div>
+      </div>`;
+    });
+    html += '</div>';
+  }
+
+  summaryReport.innerHTML = html;
 
   showSection('summary');
 }
@@ -423,7 +493,7 @@ startBtn.addEventListener('click', async () => {
     const resp = await fetch(`${API}/session/start`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ candidate_id: candidateId, role, skills }),
+      body: JSON.stringify({ candidate_id: candidateId, role, skills, job_description: jdInput.value, candidate_profile: profileInput.value }),
     });
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({}));
@@ -487,13 +557,12 @@ endBtn.addEventListener('click', async () => {
     : 0;
 
   avgScoreNum.textContent = avg;
-  summaryText.textContent = 'Interview ended early. Here are your results so far.';
-  summaryHistList.innerHTML = '';
+  recommendationBadge.textContent = 'Ended early';
+
+  let html = '<div class="card-title" style="margin-top:16px">📚 Full Transcript</div><div class="history-list">';
   historyItems.forEach(data => {
     const score = data.score ?? 0;
-    const div = document.createElement('div');
-    div.className = 'history-item';
-    div.innerHTML = `
+    html += `<div class="history-item">
       <div class="history-item-header">
         <span class="text-muted mono">${escapeHtml(data.skill || '')}</span>
         <span class="score-badge ${score >= 7 ? 'high' : score >= 4 ? 'mid' : 'low'}">${score} / 10</span>
@@ -501,9 +570,10 @@ endBtn.addEventListener('click', async () => {
       <div class="history-q">❓ ${escapeHtml(data.question || '')}</div>
       <div class="history-a">💬 ${escapeHtml(data.transcript || '')}</div>
       <div class="history-feedback">📌 ${escapeHtml(data.feedback || '')}</div>
-    `;
-    summaryHistList.appendChild(div);
+    </div>`;
   });
+  html += '</div>';
+  summaryReport.innerHTML = html;
   showSection('summary');
 });
 
@@ -515,6 +585,8 @@ restartBtn.addEventListener('click', () => {
   historyItems = [];
   renderSkills();
   roleInput.value  = '';
+  jdInput.value    = '';
+  profileInput.value = '';
   skillInput.value = '';
   nameInput.value  = '';
   showSection('landing');

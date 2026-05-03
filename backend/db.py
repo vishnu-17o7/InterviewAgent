@@ -57,6 +57,8 @@ def init_db():
             status          TEXT NOT NULL DEFAULT 'active',
             question_index  INTEGER NOT NULL DEFAULT 0,
             current_question TEXT,
+            job_description TEXT DEFAULT '',
+            candidate_profile TEXT DEFAULT '',
             created_at      TEXT NOT NULL,
             completed_at    TEXT
         );
@@ -78,6 +80,12 @@ def init_db():
         conn.execute("ALTER TABLE sessions ADD COLUMN question_index INTEGER NOT NULL DEFAULT 0")
     except sqlite3.OperationalError:
         pass
+    # Migrate: add job_description and candidate_profile
+    for col in ("job_description", "candidate_profile"):
+        try:
+            conn.execute(f"ALTER TABLE sessions ADD COLUMN {col} TEXT DEFAULT ''")
+        except sqlite3.OperationalError:
+            pass
     conn.commit()
     conn.close()
 
@@ -162,12 +170,12 @@ def get_questions_for_job(job_template_id: int) -> list[dict]:
 
 # ── Sessions ────────────────────────────────────────────────────────────────
 
-def create_session(candidate_id: int, job_template_id: int, skills: list[str], first_question: str) -> str:
+def create_session(candidate_id: int, job_template_id: int, skills: list[str], first_question: str, job_description: str = "", candidate_profile: str = "") -> str:
     session_id = str(uuid.uuid4())
     conn = get_conn()
     conn.execute(
-        "INSERT INTO sessions (id, candidate_id, job_template_id, status, question_index, current_question, created_at) VALUES (?, ?, ?, 'active', 0, ?, ?)",
-        (session_id, candidate_id, job_template_id, first_question, _now()),
+        "INSERT INTO sessions (id, candidate_id, job_template_id, status, question_index, current_question, job_description, candidate_profile, created_at) VALUES (?, ?, ?, 'active', 0, ?, ?, ?, ?)",
+        (session_id, candidate_id, job_template_id, first_question, job_description, candidate_profile, _now()),
     )
     conn.commit()
     conn.close()
@@ -198,6 +206,8 @@ def get_session(session_id: str) -> dict | None:
         "history": get_session_history(session_id),
         "status": row["status"],
         "current_question": row["current_question"],
+        "job_description": row["job_description"] or "",
+        "candidate_profile": row["candidate_profile"] or "",
     }
 
 

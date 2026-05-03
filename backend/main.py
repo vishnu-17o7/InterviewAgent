@@ -49,6 +49,8 @@ class StartRequest(BaseModel):
     candidate_id: int
     role: str
     skills: list[str]
+    job_description: str = ""
+    candidate_profile: str = ""
 
 
 class SuggestSkillsRequest(BaseModel):
@@ -105,7 +107,7 @@ async def session_start(body: StartRequest):
     if not body.skills:
         raise HTTPException(400, "at least one skill is required")
 
-    session_id, question = start_interview(body.candidate_id, body.role.strip(), body.skills)
+    session_id, question = start_interview(body.candidate_id, body.role.strip(), body.skills, body.job_description.strip(), body.candidate_profile.strip())
 
     audio_bytes = text_to_speech_bytes(question)
     audio_b64 = base64.b64encode(audio_bytes).decode()

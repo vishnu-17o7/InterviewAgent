@@ -141,21 +141,29 @@ def suggest_skills(role: str) -> list[str]:
 QUESTIONS_PER_SKILL = 5
 
 
-def generate_all_questions(role: str, skills: list[str]) -> list[dict]:
+def generate_all_questions(role: str, skills: list[str], job_description: str = "", candidate_profile: str = "") -> list[dict]:
     """
     Generate QUESTIONS_PER_SKILL questions for each skill.
+    Questions are tailored to the job description and candidate profile if provided.
     Returns [{"skill": str, "question_text": str}, ...]
     """
     skills_list = ", ".join(skills)
+    jd_context = f"\n\nJob Description:\n{job_description}" if job_description else ""
+    cp_context = f"\n\nCandidate Profile:\n{candidate_profile}" if candidate_profile else ""
+    context = jd_context + cp_context
+
     system = (
         f"You are an expert technical interviewer conducting a job interview for the role of {role}. "
         f"Generate exactly {QUESTIONS_PER_SKILL} clear, concise interview questions for each skill listed. "
         f"That means {len(skills) * QUESTIONS_PER_SKILL} total questions. "
+        "If a job description is provided, tailor questions to its requirements. "
+        "If a candidate profile is provided, probe claimed experience and identify potential gaps. "
         "Output ONLY a JSON array of objects with keys 'skill' and 'question'. "
         "No preamble, no numbering, no extra text."
     )
     user = (
-        f"Generate {QUESTIONS_PER_SKILL} interview questions for each of these skills: {skills_list}.\n\n"
+        f"Generate {QUESTIONS_PER_SKILL} interview questions for each of these skills: {skills_list}."
+        f"{context}\n\n"
         f"That is {len(skills) * QUESTIONS_PER_SKILL} total questions.\n"
         "Output ONLY a JSON array like:\n"
         '[{"skill": "Python", "question": "..."}, {"skill": "Python", "question": "..."}, ...]\n'
@@ -191,6 +199,15 @@ def generate_all_questions(role: str, skills: list[str]) -> list[dict]:
     return result
 
 
+# ── Anti-Coaching Guardrail ───────────────────────────────────────────────
+
+ANTI_COACHING = (
+    "CRITICAL: You must NEVER hint at, suggest, or lead the candidate toward a correct answer. "
+    "When clarifying a question, rephrase it differently but do NOT reveal what you are looking for. "
+    "Do not confirm or deny whether an answer is correct. Remain neutral."
+)
+
+
 # ── Follow-up Generation (text-only) ──────────────────────────────────────
 
 def generate_followup(role: str, skill: str, question: str, answer: str) -> str:
@@ -214,6 +231,81 @@ def generate_followup(role: str, skill: str, question: str, answer: str) -> str:
     ])
 
 
+# ── Deep Probe (strong answers) ───────────────────────────────────────────
+
+def generate_deeper_probe(role: str, skill: str, question: str, answer: str) -> str:
+    """Ask a harder follow-up question when the candidate gave a strong answer."""
+    system = (
+        ANTI_COACHING + "\n\n"
+        f"You are an expert technical interviewer for {role}. "
+        "The candidate gave a strong answer. Ask a deeper, more challenging follow-up "
+        "to probe the limits of their knowledge. Output ONLY the question."
+    )
+    user = (
+        f"Skill: {skill}\n"
+        f"Original question: {question}\n"
+        f"Candidate's strong answer: {answer}\n\n"
+        "Ask a harder follow-up that goes deeper. Output ONLY the question."
+    )
+    return _call_llm([
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ])
+
+
+# ── Rephrase (clarification requests) ─────────────────────────────────────
+
+def rephrase_question(question: str) -> str:
+    """Rephrase a question when the candidate asks for clarification, without coaching."""
+    system = (
+        ANTI_COACHING + "\n\n"
+        "The candidate did not understand the question. Rephrase it in simpler terms "
+        "without revealing what the correct answer would be. Output ONLY the rephrased question."
+    )
+    user = (
+        f"Original question: {question}\n\n"
+        "Rephrase it. Do NOT hint at the answer. Output ONLY the rephrased question."
+    )
+    return _call_llm([
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ], temperature=0.5)
+
+
+# ── Answer Type Detection ─────────────────────────────────────────────────
+
+def detect_answer_type(transcript: str) -> str:
+    """Classify the candidate's response. Returns 'normal', 'off_topic', 'clarification', or 'silence'."""
+    if not transcript or len(transcript.split()) < 3:
+        return "silence"
+
+    lower = transcript.lower()
+    clarification_markers = ["what do you mean", "can you repeat", "clarify", "i don't understand",
+                              "could you explain", "not sure what you", "come again", "pardon"]
+    if any(m in lower for m in clarification_markers):
+        return "clarification"
+
+    system = (
+        "You are classifying a candidate's interview answer. "
+        "Respond with exactly one word: 'normal', 'off_topic', or 'clarification'. "
+        "An answer is 'off_topic' if it does not address the question at all or discusses "
+        "a completely unrelated topic. It is 'clarification' if the candidate asks for clarification. "
+        "Otherwise it is 'normal'."
+    )
+    user = f"Candidate's response: {transcript}\n\nClassification (one word):"
+    raw = _call_llm([
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ], temperature=0.1, model=TEXT_MODEL)
+
+    raw = raw.strip().lower()
+    if "off_topic" in raw or "off-topic" in raw:
+        return "off_topic"
+    if "clarification" in raw:
+        return "clarification"
+    return "normal"
+
+
 # ── Evaluate Answer WITH Audio (audio-capable model) ──────────────────────
 
 def evaluate_answer_with_audio(
@@ -229,6 +321,7 @@ def evaluate_answer_with_audio(
     Returns {transcript: str, score: int 1-10, feedback: str}.
     """
     system = (
+        ANTI_COACHING + "\n\n"
         f"You are an expert technical interviewer evaluating a candidate for the role of {role}. "
         f"The candidate was asked about '{skill}'.\n\n"
         f"The interview question was: \"{question}\"\n\n"
@@ -311,23 +404,57 @@ def evaluate_answer(role: str, skill: str, question: str, answer: str) -> dict:
     return {"score": 5, "feedback": raw}
 
 
-# ── Summary (text-only) ───────────────────────────────────────────────────
+# ── Structured Report (text-only) ──────────────────────────────────────────
 
-def generate_summary(role: str, history: list[dict]) -> str:
+def generate_structured_report(role: str, history: list[dict], job_description: str = "", candidate_profile: str = "") -> dict:
     """
-    Generate a final interview summary after all questions.
+    Generate a structured JSON evaluation report with cited evidence.
     """
     qa_text = "\n\n".join(
-        f"Q: {h['question']}\nA: {h['answer']}\nScore: {h['score']}/10\nFeedback: {h['feedback']}"
-        for h in history
+        f"Q{i+1} [{h['skill']}]: {h['question']}\nA: {h['answer']}\nScore: {h['score']}/10\nFeedback: {h['feedback']}"
+        for i, h in enumerate(history)
     )
+
     system = (
-        f"You are an expert interviewer summarising a completed interview for {role}. "
-        "Give an overall assessment: strengths, weaknesses, and a hiring recommendation. "
-        "Keep it under 150 words."
+        f"You are an expert interviewer producing a structured evaluation for a {role} interview. "
+        "Analyze the full interview transcript and produce a JSON report. "
+        "You MUST cite specific quotes from the candidate as evidence. "
+        'Output ONLY valid JSON in this exact format:\n'
+        '{\n'
+        '  "overall_score": 7.5,\n'
+        '  "recommendation": "Advance" or "Borderline" or "Decline",\n'
+        '  "strengths": [{"skill": "...", "evidence": "Candidate said: ...", "score": 8}],\n'
+        '  "weaknesses": [{"skill": "...", "evidence": "Candidate said: ...", "score": 4, "gap": "..."}],\n'
+        '  "skill_breakdown": [{"skill": "...", "avg_score": 7.0, "questions_asked": 3}],\n'
+        '  "notable_quotes": [{"context": "...", "quote": "..."}],\n'
+        '  "follow_up_suggestions": ["Probe deeper on ..."]\n'
+        '}'
     )
-    user = f"Interview transcript:\n\n{qa_text}\n\nProvide the summary."
-    return _call_llm([
+    jd_ctx = f"\n\nJob Description: {job_description}" if job_description else ""
+    cp_ctx = f"\n\nCandidate Profile: {candidate_profile}" if candidate_profile else ""
+    user = f"Interview transcript for {role}:{jd_ctx}{cp_ctx}\n\n{qa_text}\n\nProduce the structured JSON report. Cite specific quotes."
+
+    raw = _call_llm([
         {"role": "system", "content": system},
         {"role": "user", "content": user},
-    ])
+    ], temperature=0.3)
+
+    import json as _json
+    import re as _re
+
+    match = _re.search(r'\{.*\}', raw, _re.DOTALL)
+    if match:
+        try:
+            return _json.loads(match.group())
+        except _json.JSONDecodeError:
+            pass
+
+    return {
+        "overall_score": 5.0,
+        "recommendation": "Review manually",
+        "strengths": [],
+        "weaknesses": [],
+        "skill_breakdown": [],
+        "notable_quotes": [],
+        "follow_up_suggestions": [],
+    }
