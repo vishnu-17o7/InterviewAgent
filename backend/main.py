@@ -185,6 +185,53 @@ def session_status(session_id: str):
     return get_status(session_id)
 
 
+@app.get("/session/next-question/{session_id}")
+def session_next_question(session_id: str):
+    """
+    Gemini Live flow: return the current question text for the audio agent to speak.
+    Used by the frontend before opening the Gemini Live audio channel.
+    """
+    session = store.get_session(session_id)
+    if not session:
+        raise HTTPException(404, "Session not found")
+    if session["status"] == "complete":
+        raise HTTPException(400, "Interview already complete")
+
+    skills = session["skills"]
+    qi = session["question_index"]
+    skill = skills[qi % len(skills)] if skills else ""
+
+    return {
+        "session_id": session_id,
+        "question": session["current_question"],
+        "question_index": qi,
+        "skill": skill,
+        "is_complete": False,
+    }
+
+
+class SubmitTranscriptRequest(BaseModel):
+    transcript: str
+    score: int
+    feedback: str = ""
+
+
+@app.post("/session/submit-transcript/{session_id}")
+def session_submit_transcript(session_id: str, body: SubmitTranscriptRequest):
+    """
+    Gemini Live flow: after the audio agent evaluates an answer, submit the
+    transcript and score. The backend records it and returns the next question.
+    """
+    from .interview import process_answer
+
+    try:
+        result = process_answer(session_id, body.transcript)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    return result
+
+
 @app.post("/session/end/{session_id}")
 def session_end(session_id: str):
     session = store.get_session(session_id)

@@ -2,7 +2,11 @@
    app.js — Voice Interview Agent Frontend Logic
    ══════════════════════════════════════════════════════════════════════════ */
 
-const API = 'http://localhost:8000';
+// Auto-detect API origin from the browser URL (works on any port)
+const API = window.location.origin;
+
+// Set to true to use Gemini Live voice-to-voice (requires GEMINI_API_KEY in gemini-live.js)
+const USE_GEMINI_LIVE = false;
 
 // ── State ──────────────────────────────────────────────────────────────────
 let sessionId    = null;
@@ -264,8 +268,13 @@ function stopRecording() {
 }
 
 micBtn.addEventListener('click', () => {
-  if (isRecording) stopRecording();
-  else startRecording();
+  if (USE_GEMINI_LIVE) {
+    stopGeminiAnswer();
+  } else if (isRecording) {
+    stopRecording();
+  } else {
+    startRecording();
+  }
 });
 
 // ── Submit Answer ──────────────────────────────────────────────────────────
@@ -479,6 +488,149 @@ function finishInterview(finalData) {
   showSection('summary');
 }
 
+// ── Gemini Live Interview Flow ─────────────────────────────────────────────
+async function startGeminiInterview(firstData) {
+  const role = roleInput.value.trim();
+  const skill = firstData.skill || (skills.length > 0 ? skills[0] : '');
+
+  setStatus('Connecting to Gemini Live…');
+  micBtn.disabled = true;
+  micLabel.textContent = 'Starting voice session…';
+
+  try {
+    await startGeminiLive(
+      firstData.question,
+      role,
+      skill,
+      // onTranscript — called when Gemini extracts transcript + score
+      async (result) => {
+        await handleGeminiTranscript(result);
+      }
+    );
+
+    // Gemini is connected and will speak the question
+    micBtn.textContent = '🔊';
+    micBtn.disabled = false;
+    micLabel.textContent = 'Listening for question…';
+    setStatus('Gemini is speaking the question');
+
+    // Start microphone after a short delay (let Gemini start speaking)
+    setTimeout(async () => {
+      await startGeminiMic();
+      micBtn.textContent = '⏹️';
+      micLabel.textContent = 'Speak your answer… ';
+      setStatus('Recording — speak now');
+    }, 2000);
+
+  } catch (e) {
+    showToast(`Gemini Live error: ${e.message}`, 'error');
+    micBtn.disabled = false;
+    micBtn.textContent = '🎙️';
+    micLabel.textContent = 'Click to record your answer';
+    setStatus('Error — please try again');
+  }
+}
+
+async function stopGeminiAnswer() {
+  await stopGeminiMic();
+  micBtn.disabled = true;
+  micBtn.textContent = '⏳';
+  micLabel.textContent = 'Processing your answer…';
+  setStatus('Evaluating…');
+}
+
+async function handleGeminiTranscript(result) {
+  const { transcript, score, feedback } = result;
+  transcriptBox.textContent = transcript || '(no speech detected)';
+  transcriptWrap.style.display = 'block';
+
+  if (score > 0 || feedback) {
+    const s = score ?? 0;
+    scoreBadge.textContent = `${s} / 10`;
+    scoreBadge.className = 'score-badge ' + (s >= 7 ? 'high' : s >= 4 ? 'mid' : 'low');
+    feedbackBox.textContent = feedback || '—';
+    evalWrap.style.display = 'block';
+  }
+
+  // Submit to backend
+  let data;
+  try {
+    const resp = await fetch(`${API}/session/submit-transcript/${sessionId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ transcript, score: score || 0, feedback }),
+    });
+    data = await resp.json();
+  } catch (e) {
+    showToast(`Error submitting answer: ${e.message}`, 'error');
+    micBtn.disabled = false;
+    micBtn.textContent = '🎙️';
+    micLabel.textContent = 'Click to record your answer';
+    return;
+  }
+
+  // Build history item
+  const histEntry = {
+    skill: data.skill || '',
+    question: data.question || '',
+    transcript,
+    score: score || 0,
+    feedback,
+  };
+  historyItems.push(histEntry);
+  renderHistoryItem(histEntry);
+
+  if (data.is_complete) {
+    finishInterview({ ...data, summary: data.report || {} });
+    await stopGeminiLive();
+    return;
+  }
+
+  updateProgress(data);
+
+  // Get next question from backend
+  let nextData;
+  try {
+    const nr = await fetch(`${API}/session/next-question/${sessionId}`);
+    nextData = await nr.json();
+  } catch (e) {
+    showToast(`Error fetching next question: ${e.message}`, 'error');
+    return;
+  }
+
+  // Update UI for next question
+  currentQuestion.textContent = nextData.question;
+  currentSkillLabel.textContent = nextData.skill || '';
+  micBtn.disabled = true;
+  micLabel.textContent = 'Next question coming…';
+  setStatus('Preparing next question');
+
+  // Start next Gemini Live round
+  try {
+    await startGeminiLive(
+      nextData.question,
+      roleInput.value.trim(),
+      nextData.skill || '',
+      async (result) => await handleGeminiTranscript(result)
+    );
+
+    micBtn.textContent = '🔊';
+    micBtn.disabled = false;
+    micLabel.textContent = 'Listening…';
+    setStatus('Gemini is speaking');
+
+    setTimeout(async () => {
+      await startGeminiMic();
+      micBtn.textContent = '⏹️';
+      micBtn.disabled = false;
+      micLabel.textContent = 'Speak your answer…';
+      setStatus('Recording — speak now');
+    }, 2000);
+  } catch (e) {
+    showToast(`Gemini Live error: ${e.message}`, 'error');
+  }
+}
+
 // ── Start Interview ────────────────────────────────────────────────────────
 startBtn.addEventListener('click', async () => {
   const role = roleInput.value.trim();
@@ -527,19 +679,26 @@ startBtn.addEventListener('click', async () => {
   micBtn.disabled = true;
 
   showSection('interview');
-  setStatus('Playing first question…');
-  audioInd.classList.add('visible');
-  micLabel.textContent = 'Wait for the question to finish…';
 
-  // Play first question
-  if (data.audio_b64) {
-    await playAudioB64(data.audio_b64);
+  if (USE_GEMINI_LIVE) {
+    // ── Gemini Live voice-to-voice path ──
+    await startGeminiInterview(data);
+  } else {
+    // ── Legacy TTS + record + upload path ──
+    setStatus('Playing first question…');
+    audioInd.classList.add('visible');
+    micLabel.textContent = 'Wait for the question to finish…';
+
+    if (data.audio_b64) {
+      await playAudioB64(data.audio_b64);
+    }
+
+    audioInd.classList.remove('visible');
+    micBtn.disabled = false;
+    micLabel.textContent = 'Click to record your answer';
+    setStatus('Ready — recording enabled');
   }
 
-  audioInd.classList.remove('visible');
-  micBtn.disabled = false;
-  micLabel.textContent = 'Click to record your answer';
-  setStatus('Ready — recording enabled');
   startBtn.disabled = false;
   startBtn.textContent = '🚀 Start Interview';
 });

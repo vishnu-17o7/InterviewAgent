@@ -84,6 +84,7 @@ def generate_question(role: str, skill: str, history: list[dict]) -> str:
         )
 
     system = (
+        VERBAL_QUESTIONS + "\n\n"
         f"You are an expert technical interviewer conducting a job interview for the role of {role}. "
         "Ask one clear, concise interview question. Do NOT include any preamble or labels — "
         "only output the question itself."
@@ -153,6 +154,7 @@ def generate_all_questions(role: str, skills: list[str], job_description: str = 
     context = jd_context + cp_context
 
     system = (
+        VERBAL_QUESTIONS + "\n\n"
         f"You are an expert technical interviewer conducting a job interview for the role of {role}. "
         f"Generate exactly {QUESTIONS_PER_SKILL} clear, concise interview questions for each skill listed. "
         f"That means {len(skills) * QUESTIONS_PER_SKILL} total questions. "
@@ -207,6 +209,14 @@ ANTI_COACHING = (
     "Do not confirm or deny whether an answer is correct. Remain neutral."
 )
 
+VERBAL_QUESTIONS = (
+    "CRITICAL: These are VERBAL interview questions answered by speaking aloud. "
+    "Ask conceptual, discussion-based questions. NEVER ask the candidate to write code, "
+    "implement a function, or type anything. Frame questions as: 'Explain how...', "
+    "'Describe your approach to...', 'How would you handle...', 'What is the difference between...'. "
+    "No coding exercises, no whiteboarding prompts."
+)
+
 
 # ── Follow-up Generation (text-only) ──────────────────────────────────────
 
@@ -215,6 +225,7 @@ def generate_followup(role: str, skill: str, question: str, answer: str) -> str:
     Generate a follow-up question when the candidate's answer is weak.
     """
     system = (
+        VERBAL_QUESTIONS + "\n\n"
         f"You are an expert technical interviewer for {role}. "
         "The candidate gave a weak or incomplete answer. Ask one focused follow-up question "
         "to probe deeper. Output ONLY the question."
@@ -236,7 +247,7 @@ def generate_followup(role: str, skill: str, question: str, answer: str) -> str:
 def generate_deeper_probe(role: str, skill: str, question: str, answer: str) -> str:
     """Ask a harder follow-up question when the candidate gave a strong answer."""
     system = (
-        ANTI_COACHING + "\n\n"
+        VERBAL_QUESTIONS + "\n\n" + ANTI_COACHING + "\n\n"
         f"You are an expert technical interviewer for {role}. "
         "The candidate gave a strong answer. Ask a deeper, more challenging follow-up "
         "to probe the limits of their knowledge. Output ONLY the question."
