@@ -75,6 +75,7 @@ def app_config():
     """Return client-side configuration (non-secret values)."""
     return {
         "gemini_api_key": os.getenv("GEMINI_API_KEY", ""),
+        "use_gemini_live": os.getenv("USE_GEMINI_LIVE", "false").lower() == "true",
     }
 
 

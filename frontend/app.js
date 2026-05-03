@@ -5,8 +5,8 @@
 // Auto-detect API origin from the browser URL (works on any port)
 const API = window.location.origin;
 
-// Set to true to use Gemini Live voice-to-voice (requires GEMINI_API_KEY in gemini-live.js)
-const USE_GEMINI_LIVE = false;
+// Fetched from backend /config on startup — set GEMINI_API_KEY + USE_GEMINI_LIVE in .env
+let USE_GEMINI_LIVE = false;
 
 // ── State ──────────────────────────────────────────────────────────────────
 let sessionId    = null;
@@ -868,4 +868,13 @@ navHomeBtn.addEventListener('click', () => {
 });
 
 // ── Init ───────────────────────────────────────────────────────────────────
-showSection('landing');
+(async function initConfig() {
+  try {
+    const resp = await fetch(`${API}/config`);
+    const config = await resp.json();
+    USE_GEMINI_LIVE = config.use_gemini_live === true;
+  } catch (_) {
+    USE_GEMINI_LIVE = false;
+  }
+  showSection('landing');
+})();
