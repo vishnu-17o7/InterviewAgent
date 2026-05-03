@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>InterviewAgent — AI Voice Interview Coach</title>
+  <meta name="description" content="Practice technical interviews with an AI voice agent. Speak your answers, get instant feedback and scores." />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<div class="container">
+
+  <!-- ── Header ──────────────────────────────────────────────────────────── -->
+  <header>
+    <div class="logo">
+      <div class="logo-icon">🎙️</div>
+      <h1>InterviewAgent</h1>
+    </div>
+    <p>AI-powered voice interview coach — speak your answers, get instant feedback</p>
+  </header>
+
+  <!-- ══════════════════════════════════════════════════════════════════════ -->
+  <!-- SETUP SECTION                                                          -->
+  <!-- ══════════════════════════════════════════════════════════════════════ -->
+  <section id="setup-section">
+
+    <div class="card">
+      <div class="card-title">📋 Interview Setup</div>
+
+      <div class="form-group">
+        <label for="role-input">Target Role</label>
+        <input type="text" id="role-input" placeholder="e.g. Senior Python Developer" />
+      </div>
+
+      <div class="form-group">
+        <label for="skill-input">Skills to Cover</label>
+        <div class="flex gap-8">
+          <input type="text" id="skill-input" placeholder="e.g. Python, System Design…" style="flex:1" />
+          <button class="btn btn-ghost" id="add-skill-btn" type="button">Add</button>
+        </div>
+        <p class="hint">Press Enter or click Add — at least one skill required</p>
+        <div id="skills-tags"></div>
+      </div>
+
+      <button class="btn btn-primary btn-full mt-16" id="start-btn" type="button">
+        🚀 Start Interview
+      </button>
+    </div>
+
+    <div class="card" style="padding: 20px 28px;">
+      <div class="card-title">⚡ How It Works</div>
+      <ol style="color: var(--muted); font-size: 0.85rem; line-height: 2; padding-left: 18px;">
+        <li>Enter your target role and the skills you want to be tested on</li>
+        <li>The AI generates a question and reads it aloud</li>
+        <li>Press the mic button and speak your answer</li>
+        <li>Your speech is transcribed and evaluated by the AI</li>
+        <li>Low scores get follow-up questions; high scores advance to the next skill</li>
+      </ol>
+    </div>
+
+  </section>
+
+  <!-- ══════════════════════════════════════════════════════════════════════ -->
+  <!-- INTERVIEW SECTION                                                      -->
+  <!-- ══════════════════════════════════════════════════════════════════════ -->
+  <section id="interview-section">
+
+    <!-- Progress -->
+    <div class="card" style="padding: 18px 28px;">
+      <div class="progress-label">
+        <span id="progress-text">Skill 1 of 1</span>
+        <span id="progress-pct">0%</span>
+      </div>
+      <div class="progress-bar-wrap">
+        <div class="progress-bar-fill" id="progress-fill" style="width:0%"></div>
+      </div>
+      <div class="flex items-center gap-8 mt-8">
+        <span class="status-dot" id="status-dot"></span>
+        <span class="text-muted" id="status-text">Waiting for question…</span>
+        <div class="audio-indicator" id="audio-indicator">
+          <div class="spinner"></div> Playing question…
+        </div>
+      </div>
+    </div>
+
+    <!-- Current Question -->
+    <div class="card">
+      <div class="card-title">🤖 AI Question</div>
+      <div class="question-box">
+        <div class="question-skill" id="current-skill-label">—</div>
+        <div id="current-question">Your question will appear here…</div>
+      </div>
+    </div>
+
+    <!-- Microphone -->
+    <div class="card">
+      <div class="card-title">🎤 Your Answer</div>
+      <div class="mic-wrapper">
+        <div class="waveform" id="waveform">
+          <div class="waveform-bar"></div>
+          <div class="waveform-bar"></div>
+          <div class="waveform-bar"></div>
+          <div class="waveform-bar"></div>
+          <div class="waveform-bar"></div>
+          <div class="waveform-bar"></div>
+          <div class="waveform-bar"></div>
+        </div>
+        <button class="mic-btn" id="mic-btn" type="button" title="Click to record" disabled>
+          🎙️
+        </button>
+        <p class="mic-label" id="mic-label">Wait for the question to finish playing…</p>
+      </div>
+
+      <!-- Transcript -->
+      <div id="transcript-wrap" style="display:none; margin-top: 12px;">
+        <div class="card-title">📝 Transcript</div>
+        <div class="transcript-box" id="transcript-box">—</div>
+      </div>
+
+      <!-- Last Evaluation -->
+      <div id="eval-wrap" style="display:none; margin-top: 16px;">
+        <div class="flex items-center justify-between mb-8 flex-wrap gap-8">
+          <span class="card-title" style="margin:0">📊 Evaluation</span>
+          <span class="score-badge" id="score-badge">— / 10</span>
+        </div>
+        <div class="history-feedback" id="feedback-box">—</div>
+      </div>
+    </div>
+
+    <!-- History -->
+    <div class="card" id="history-card" style="display:none;">
+      <div class="card-title">📚 Interview History</div>
+      <div class="history-list" id="history-list"></div>
+    </div>
+
+    <!-- End interview early -->
+    <div style="text-align: center; margin-top: 4px;">
+      <button class="btn btn-ghost" id="end-btn" type="button" style="font-size: 0.8rem; padding: 8px 18px;">
+        ✖ End Interview Early
+      </button>
+    </div>
+
+  </section>
+
+  <!-- ══════════════════════════════════════════════════════════════════════ -->
+  <!-- SUMMARY SECTION                                                        -->
+  <!-- ══════════════════════════════════════════════════════════════════════ -->
+  <section id="summary-section">
+
+    <div class="card">
+      <div class="card-title">🏆 Interview Complete</div>
+
+      <div class="avg-score-ring" id="avg-score-ring">
+        <span class="avg-score-num" id="avg-score-num">—</span>
+        <span class="avg-score-label">avg / 10</span>
+      </div>
+
+      <div class="summary-box" id="summary-text">Loading summary…</div>
+    </div>
+
+    <!-- Full history in summary -->
+    <div class="card">
+      <div class="card-title">📚 Full Transcript</div>
+      <div class="history-list" id="summary-history-list"></div>
+    </div>
+
+    <div style="text-align: center; margin-top: 16px;">
+      <button class="btn btn-primary" id="restart-btn" type="button">
+        🔄 Start New Interview
+      </button>
+    </div>
+
+  </section>
+
+</div><!-- /container -->
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
