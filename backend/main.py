@@ -6,6 +6,7 @@ Run with:
 """
 
 import io
+import os
 import base64
 import traceback
 from pathlib import Path
@@ -13,6 +14,11 @@ from fastapi import FastAPI, File, Form, Request, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
+from dotenv import load_dotenv
+
+load_dotenv()
+
+PORT = int(os.getenv("PORT", "8000"))
 
 from .interview import start_interview, process_answer_audio, get_status
 from .tts import text_to_speech_bytes
@@ -193,4 +199,4 @@ app.mount("/", StaticFiles(directory=str(_FRONTEND), html=True), name="frontend"
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("backend.main:app", host="127.0.0.1", port=8000, reload=True)
+    uvicorn.run("backend.main:app", host="127.0.0.1", port=PORT, reload=True)
