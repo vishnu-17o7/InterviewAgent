@@ -1,146 +1,195 @@
 """
 interview.py — Session state machine
-Controls the flow: question → answer → evaluate → follow-up or next skill → end
+10-question flat loop with round-robin skill selection.
+Questions are cached per job template in SQLite.
 """
 
 from . import store, llm
 
-MAX_FOLLOWUPS = 1      # max follow-up questions per skill
-PASS_SCORE = 6         # score threshold to move to next skill
+TOTAL_QUESTIONS = 10
+PASS_SCORE = 6
 
 
-def start_interview(role: str, skills: list[str]) -> tuple[str, str]:
+def start_interview(candidate_id: int, role: str, skills: list[str]) -> tuple[str, str]:
+    """Create session. Generate/load questions. Return first question."""
+    jt_id = store.find_or_create_job_template(role, skills)
+
+    if not store.job_template_has_questions(jt_id):
+        questions = llm.generate_all_questions(role, skills)
+        store.insert_questions(jt_id, questions)
+
+    all_qs = store.get_questions_for_job(jt_id)
+    first_q = _pick_question(all_qs, skills, 0)
+
+    session_id = store.create_session(candidate_id, jt_id, skills, first_q)
+    return session_id, first_q
+
+
+def _pick_question(all_qs: list[dict], skills: list[str], question_index: int) -> str:
     """
-    Create a new session and generate the first question.
-    Returns (session_id, first_question_text).
+    Round-robin: current skill = skills[question_index % len(skills)].
+    Pool index = how many times this skill has been visited so far
+    (which is question_index // len(skills), plus 1 if the remainder
+    covers this skill's position).
     """
-    session_id = store.create_session(role, skills)
-    question = _ask_question(session_id)
-    return session_id, question
+    num_skills = len(skills)
+    skill_idx = question_index % num_skills
+    skill = skills[skill_idx]
+
+    # How many times has this skill been visited up to and including this question_index?
+    # Every full round contributes 1 visit per skill.
+    full_rounds = question_index // num_skills
+    visits = full_rounds + (1 if question_index % num_skills >= skill_idx else 0)
+
+    # Gather all cached questions for this skill
+    skill_qs = [q for q in all_qs if q["skill"] == skill]
+    skill_qs.sort(key=lambda q: q.get("sort_order", 0))
+
+    if skill_qs:
+        pool_idx = visits % len(skill_qs)
+        return skill_qs[pool_idx]["question_text"]
+
+    # Fallback
+    return f"Tell me about your experience with {skill}."
 
 
-def _ask_question(session_id: str) -> str:
-    """
-    Generate a question for the current skill and store it in the session.
-    """
-    session = store.get_session(session_id)
-    role = session["role"]
-    skills = session["skills"]
-    skill_index = session["skill_index"]
-    current_skill = skills[skill_index]
-    history = session["history"]
-
-    question = llm.generate_question(role, current_skill, history)
-    store.update_session(session_id, {"current_question": question})
-    return question
+def _current_skill(skills: list[str], question_index: int) -> str:
+    return skills[question_index % len(skills)]
 
 
-def process_answer(session_id: str, answer_text: str) -> dict:
-    """
-    Process a candidate's answer.
-    Returns a result dict:
-    {
-        "transcript": str,
-        "question": str,
-        "score": int,
-        "feedback": str,
-        "next_question": str | None,   # None means interview is done
-        "is_followup": bool,
-        "is_complete": bool,
-        "skill": str,
-        "summary": str | None,         # filled when complete
-    }
-    """
+def process_answer_audio(session_id: str, audio_b64: str, audio_format: str = "wav") -> dict:
     session = store.get_session(session_id)
     if not session or session["status"] == "complete":
         raise ValueError("Session is complete or does not exist.")
 
     role = session["role"]
     skills = session["skills"]
-    skill_index = session["skill_index"]
-    current_skill = skills[skill_index]
+    question_index = session["question_index"]
+    current_skill = _current_skill(skills, question_index)
     question = session["current_question"]
-    follow_up_count = session["follow_up_count"]
 
-    # Evaluate the answer
+    eval_result = llm.evaluate_answer_with_audio(
+        role, current_skill, question, audio_b64, audio_format
+    )
+    transcript = eval_result.get("transcript", "[no speech detected]")
+    score = eval_result.get("score", 5)
+    feedback = eval_result.get("feedback", "")
+
+    return _finish_answer(
+        session_id, session, role, skills, question_index,
+        current_skill, question, transcript, score, feedback,
+    )
+
+
+def process_answer(session_id: str, answer_text: str) -> dict:
+    session = store.get_session(session_id)
+    if not session or session["status"] == "complete":
+        raise ValueError("Session is complete or does not exist.")
+
+    role = session["role"]
+    skills = session["skills"]
+    question_index = session["question_index"]
+    current_skill = _current_skill(skills, question_index)
+    question = session["current_question"]
+
     eval_result = llm.evaluate_answer(role, current_skill, question, answer_text)
     score = eval_result.get("score", 5)
     feedback = eval_result.get("feedback", "")
 
-    # Record this Q&A in history
+    return _finish_answer(
+        session_id, session, role, skills, question_index,
+        current_skill, question, answer_text, score, feedback,
+    )
+
+
+def _finish_answer(
+    session_id, session, role, skills, question_index,
+    current_skill, question, transcript, score, feedback,
+) -> dict:
+    is_followup = _is_current_followup(session_id, question_index)
+
     store.append_history(session_id, {
         "skill": current_skill,
         "question": question,
-        "answer": answer_text,
+        "answer": transcript,
         "score": score,
         "feedback": feedback,
-        "is_followup": follow_up_count > 0,
+        "is_followup": is_followup,
     })
 
-    # Decide next step
     weak = score < PASS_SCORE
-    can_followup = follow_up_count < MAX_FOLLOWUPS
+    next_index = question_index + 1
 
-    if weak and can_followup:
-        # Ask a follow-up for the same skill
-        followup_q = llm.generate_followup(role, current_skill, question, answer_text)
+    # Follow-up: if score is weak AND we haven't asked 10 yet, ask a follow-up
+    if weak and next_index < TOTAL_QUESTIONS:
+        followup_q = llm.generate_followup(role, current_skill, question, transcript)
         store.update_session(session_id, {
             "current_question": followup_q,
-            "follow_up_count": follow_up_count + 1,
+            "question_index": next_index,
         })
         return {
-            "transcript": answer_text,
+            "transcript": transcript,
             "question": question,
             "score": score,
             "feedback": feedback,
             "next_question": followup_q,
-            "is_followup": True,
+            "is_followup": is_followup,
             "is_complete": False,
             "skill": current_skill,
             "summary": None,
         }
-    else:
-        # Move to next skill
-        next_skill_index = skill_index + 1
-        if next_skill_index >= len(skills):
-            # All skills exhausted — end interview
-            store.update_session(session_id, {"status": "complete"})
-            summary = llm.generate_summary(role, session["history"] + [{
-                "skill": current_skill,
-                "question": question,
-                "answer": answer_text,
-                "score": score,
-                "feedback": feedback,
-            }])
-            return {
-                "transcript": answer_text,
-                "question": question,
-                "score": score,
-                "feedback": feedback,
-                "next_question": None,
-                "is_followup": False,
-                "is_complete": True,
-                "skill": current_skill,
-                "summary": summary,
-            }
-        else:
-            # Next skill
-            store.update_session(session_id, {
-                "skill_index": next_skill_index,
-                "follow_up_count": 0,
-            })
-            next_q = _ask_question(session_id)
-            return {
-                "transcript": answer_text,
-                "question": question,
-                "score": score,
-                "feedback": feedback,
-                "next_question": next_q,
-                "is_followup": False,
-                "is_complete": False,
-                "skill": current_skill,
-                "summary": None,
-            }
+
+    # Interview complete after 10 questions
+    if next_index >= TOTAL_QUESTIONS:
+        store.update_session(session_id, {"status": "complete", "question_index": next_index, "completed_at": None})
+        all_history = store.get_session(session_id)["history"]
+        summary = llm.generate_summary(role, all_history)
+        return {
+            "transcript": transcript,
+            "question": question,
+            "score": score,
+            "feedback": feedback,
+            "next_question": None,
+            "is_followup": is_followup,
+            "is_complete": True,
+            "skill": current_skill,
+            "summary": summary,
+        }
+
+    # Next regular question from pool
+    next_skill = _current_skill(skills, next_index)
+    all_qs = store.get_questions_for_job(session["job_template_id"])
+    next_q = _pick_question(all_qs, skills, next_index)
+
+    store.update_session(session_id, {
+        "current_question": next_q,
+        "question_index": next_index,
+    })
+
+    return {
+        "transcript": transcript,
+        "question": question,
+        "score": score,
+        "feedback": feedback,
+        "next_question": next_q,
+        "is_followup": is_followup,
+        "is_complete": False,
+        "skill": current_skill,
+        "summary": None,
+    }
+
+
+def _is_current_followup(session_id: str, question_index: int) -> bool:
+    """
+    A question is a follow-up if the previous answer was weak (score < PASS_SCORE).
+    We detect this by checking the last history entry's score.
+    """
+    session = store.get_session(session_id)
+    history = session.get("history", [])
+    if not history:
+        return False
+    last = history[-1]
+    return last.get("score", 10) < PASS_SCORE and not last.get("is_followup", False)
 
 
 def get_status(session_id: str) -> dict:
@@ -151,7 +200,7 @@ def get_status(session_id: str) -> dict:
         "session_id": session_id,
         "role": session["role"],
         "skills": session["skills"],
-        "skill_index": session["skill_index"],
+        "question_index": session["question_index"],
         "status": session["status"],
-        "history_count": len(session["history"]),
+        "history_count": len(session.get("history", [])),
     }

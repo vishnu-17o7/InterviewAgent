@@ -6,18 +6,29 @@ const API = 'http://localhost:8000';
 
 // ── State ──────────────────────────────────────────────────────────────────
 let sessionId    = null;
+let candidateId  = null;
 let skills       = [];
 let mediaRecorder = null;
 let audioChunks  = [];
 let isRecording  = false;
 let totalSkills  = 0;
 let currentSkillIdx = 0;
+let questionCount = 0;
+const TOTAL_QUESTIONS = 10;
 let historyItems = [];
 
 // ── DOM refs ───────────────────────────────────────────────────────────────
+const landingSection  = document.getElementById('landing-section');
 const setupSection     = document.getElementById('setup-section');
 const interviewSection = document.getElementById('interview-section');
 const summarySection   = document.getElementById('summary-section');
+const dashboardSection = document.getElementById('dashboard-section');
+
+const nameInput      = document.getElementById('name-input');
+const nameContinueBtn = document.getElementById('name-continue-btn');
+
+const navHomeBtn      = document.getElementById('nav-home-btn');
+const navDashboardBtn = document.getElementById('nav-dashboard-btn');
 
 const roleInput    = document.getElementById('role-input');
 const skillInput   = document.getElementById('skill-input');
@@ -95,11 +106,87 @@ function renderSkills() {
 addSkillBtn.addEventListener('click', () => addSkill(skillInput.value));
 skillInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); addSkill(skillInput.value); } });
 
+// ── Suggest Skills ─────────────────────────────────────────────────────────
+const suggestSkillsBtn = document.getElementById('suggest-skills-btn');
+
+suggestSkillsBtn.addEventListener('click', async () => {
+  const role = roleInput.value.trim();
+  if (!role) { showToast('Enter a target role first.', 'error'); roleInput.focus(); return; }
+
+  suggestSkillsBtn.disabled = true;
+  suggestSkillsBtn.textContent = '⏳';
+
+  try {
+    const resp = await fetch(`${API}/skills/suggest`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ role }),
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${resp.status}`);
+    }
+    const data = await resp.json();
+    (data.skills || []).forEach(s => addSkill(s));
+    if (data.skills && data.skills.length) {
+      showToast(`Added ${data.skills.length} suggested skills.`, 'success');
+    }
+  } catch (e) {
+    showToast(`Suggest failed: ${e.message}`, 'error');
+  }
+
+  suggestSkillsBtn.disabled = false;
+  suggestSkillsBtn.textContent = '✨ Suggest';
+});
+
+// ── Onboarding: Name Entry ─────────────────────────────────────────────────
+nameContinueBtn.addEventListener('click', async () => {
+  const name = nameInput.value.trim();
+  if (!name) { showToast('Please enter your name.', 'error'); nameInput.focus(); return; }
+
+  nameContinueBtn.disabled = true;
+  nameContinueBtn.textContent = 'Registering…';
+
+  try {
+    const resp = await fetch(`${API}/candidate/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${resp.status}`);
+    }
+    const data = await resp.json();
+    candidateId = data.id;
+  } catch (e) {
+    showToast(`Failed to register: ${e.message}`, 'error');
+    nameContinueBtn.disabled = false;
+    nameContinueBtn.textContent = 'Continue →';
+    return;
+  }
+
+  nameContinueBtn.disabled = false;
+  nameContinueBtn.textContent = 'Continue →';
+  showSection('setup');
+  roleInput.focus();
+});
+
+nameInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); nameContinueBtn.click(); }
+});
+
 // ── Section Switch ─────────────────────────────────────────────────────────
 function showSection(name) {
+  landingSection.style.display  = name === 'landing'   ? 'block' : 'none';
   setupSection.style.display    = name === 'setup'     ? 'block' : 'none';
   interviewSection.style.display = name === 'interview' ? 'block' : 'none';
   summarySection.style.display  = name === 'summary'   ? 'block' : 'none';
+  dashboardSection.style.display = name === 'dashboard' ? 'block' : 'none';
+
+  // Hide nav during active interview
+  if (navHomeBtn) navHomeBtn.style.display = name === 'interview' ? 'none' : '';
+  if (navDashboardBtn) navDashboardBtn.style.display = name === 'interview' ? 'none' : '';
 }
 
 // ── Audio Playback (base64 MP3) ────────────────────────────────────────────
@@ -274,11 +361,10 @@ async function playNextQuestion(data) {
 }
 
 function updateProgress(data) {
-  currentSkillIdx = skills.indexOf(data.skill) + (data.is_followup ? 0 : 1);
-  if (!data.is_followup) currentSkillIdx = Math.min(currentSkillIdx, totalSkills);
-  const pct = Math.round((currentSkillIdx / totalSkills) * 100);
+  questionCount = historyItems.length + 1;
+  const pct = Math.round((questionCount / TOTAL_QUESTIONS) * 100);
   progressFill.style.width = `${pct}%`;
-  progressText.textContent = `Skill ${Math.min(currentSkillIdx + 1, totalSkills)} of ${totalSkills}`;
+  progressText.textContent = `Question ${Math.min(questionCount, TOTAL_QUESTIONS)} of ${TOTAL_QUESTIONS}`;
   progressPct.textContent  = `${pct}%`;
 }
 
@@ -337,7 +423,7 @@ startBtn.addEventListener('click', async () => {
     const resp = await fetch(`${API}/session/start`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ role, skills }),
+      body: JSON.stringify({ candidate_id: candidateId, role, skills }),
     });
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({}));
@@ -354,12 +440,13 @@ startBtn.addEventListener('click', async () => {
   sessionId = data.session_id;
   totalSkills = skills.length;
   currentSkillIdx = 0;
+  questionCount = 0;
   historyItems = [];
 
   // Prep interview UI
   currentSkillLabel.textContent = data.skill || skills[0];
   currentQuestion.textContent   = data.question;
-  progressText.textContent = `Skill 1 of ${totalSkills}`;
+  progressText.textContent = `Question 1 of ${TOTAL_QUESTIONS}`;
   progressPct.textContent  = '0%';
   progressFill.style.width = '0%';
   historyList.innerHTML    = '';
@@ -423,15 +510,131 @@ endBtn.addEventListener('click', async () => {
 // ── Restart ────────────────────────────────────────────────────────────────
 restartBtn.addEventListener('click', () => {
   sessionId = null;
+  candidateId = null;
   skills    = [];
   historyItems = [];
   renderSkills();
   roleInput.value  = '';
   skillInput.value = '';
-  showSection('setup');
+  nameInput.value  = '';
+  showSection('landing');
 });
 
 // ── Util ───────────────────────────────────────────────────────────────────
 function escapeHtml(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
+
+// ── Dashboard ──────────────────────────────────────────────────────────────
+async function loadDashboard() {
+  document.getElementById('dashboard-candidates').innerHTML = '<p class="text-muted">Loading…</p>';
+
+  let data;
+  try {
+    const resp = await fetch(`${API}/dashboard/overview`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    data = await resp.json();
+  } catch (e) {
+    document.getElementById('dashboard-candidates').innerHTML =
+      `<p class="text-muted" style="color:var(--red)">Failed to load: ${escapeHtml(e.message)}</p>`;
+    return;
+  }
+
+  // Stats
+  document.getElementById('stat-candidates').textContent = data.stats.total_candidates;
+  document.getElementById('stat-sessions').textContent = data.stats.total_sessions;
+  document.getElementById('stat-avg').textContent = data.stats.avg_score + ' / 10';
+  document.getElementById('stat-completed').textContent = data.stats.completed;
+
+  // Candidates
+  const container = document.getElementById('dashboard-candidates');
+  if (!data.candidates.length) {
+    container.innerHTML = '<p class="text-muted">No candidates yet.</p>';
+    return;
+  }
+
+  container.innerHTML = '';
+  data.candidates.forEach(c => {
+    const card = document.createElement('div');
+    card.className = 'dash-candidate';
+
+    const sessionCount = c.sessions.length;
+    const completedCount = c.sessions.filter(s => s.status === 'complete').length;
+
+    card.innerHTML = `
+      <div class="dash-candidate-header">
+        <span class="dash-candidate-name">${escapeHtml(c.name)}</span>
+        <span class="dash-candidate-meta">
+          ${sessionCount} session${sessionCount !== 1 ? 's' : ''}
+          &middot; ${completedCount} complete
+        </span>
+      </div>
+    `;
+
+    const sessionsDiv = document.createElement('div');
+    sessionsDiv.className = 'dash-sessions';
+    sessionsDiv.style.display = 'none';
+
+    c.sessions.forEach(s => {
+      const sessDiv = document.createElement('div');
+      sessDiv.className = 'dash-session';
+
+      const avgBadge = s.avg_score >= 7 ? 'high' : s.avg_score >= 4 ? 'mid' : 'low';
+      sessDiv.innerHTML = `
+        <div class="dash-session-header">
+          <span class="dash-session-role">${escapeHtml(s.role)} &mdash; ${escapeHtml(s.skills.join(', '))}</span>
+          <span class="score-badge ${avgBadge}">${s.avg_score}/10 avg</span>
+          <span class="text-muted" style="font-size:0.72rem">${s.status === 'complete' ? 'Complete' : 'Active'}</span>
+        </div>
+      `;
+
+      if (s.answers.length) {
+        const answersDiv = document.createElement('div');
+        answersDiv.className = 'dash-session-answers';
+        answersDiv.style.display = 'none';
+
+        let html = '<table class="dash-answer-table"><thead><tr><th>Skill</th><th>Question</th><th>Answer</th><th>Score</th><th>Feedback</th></tr></thead><tbody>';
+        s.answers.forEach(a => {
+          const sc = a.score ?? 0;
+          html += `<tr>
+            <td>${escapeHtml(a.skill)}${a.is_followup ? ' (FU)' : ''}</td>
+            <td>${escapeHtml(a.question)}</td>
+            <td class="transcript-cell">${escapeHtml(a.transcript || '—')}</td>
+            <td><span class="score-badge ${sc >= 7 ? 'high' : sc >= 4 ? 'mid' : 'low'}">${sc}/10</span></td>
+            <td>${escapeHtml(a.feedback || '—')}</td>
+          </tr>`;
+        });
+        html += '</tbody></table>';
+        answersDiv.innerHTML = html;
+
+        sessDiv.addEventListener('click', () => {
+          answersDiv.style.display = answersDiv.style.display === 'none' ? 'block' : 'none';
+        });
+        sessDiv.appendChild(answersDiv);
+      }
+
+      sessionsDiv.appendChild(sessDiv);
+    });
+
+    const header = card.querySelector('.dash-candidate-header');
+    header.addEventListener('click', () => {
+      sessionsDiv.style.display = sessionsDiv.style.display === 'none' ? 'block' : 'none';
+    });
+
+    card.appendChild(sessionsDiv);
+    container.appendChild(card);
+  });
+}
+
+// ── Navigation ─────────────────────────────────────────────────────────────
+navDashboardBtn.addEventListener('click', () => {
+  showSection('dashboard');
+  loadDashboard();
+});
+
+navHomeBtn.addEventListener('click', () => {
+  showSection('landing');
+});
+
+// ── Init ───────────────────────────────────────────────────────────────────
+showSection('landing');

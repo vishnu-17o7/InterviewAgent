@@ -18,7 +18,39 @@
       <h1>InterviewAgent</h1>
     </div>
     <p>AI-powered voice interview coach — speak your answers, get instant feedback</p>
+    <nav style="margin-top: 12px;">
+      <button class="btn btn-ghost" id="nav-home-btn" type="button">🏠 Home</button>
+      <button class="btn btn-ghost" id="nav-dashboard-btn" type="button">📊 Dashboard</button>
+    </nav>
   </header>
+
+  <!-- ══════════════════════════════════════════════════════════════════════ -->
+  <!-- LANDING SECTION                                                        -->
+  <!-- ══════════════════════════════════════════════════════════════════════ -->
+  <section id="landing-section">
+
+    <div class="card" style="text-align: center;">
+      <div class="logo" style="justify-content: center; margin-bottom: 12px;">
+        <div class="logo-icon">🤖</div>
+      </div>
+      <div class="card-title" style="font-size: 1.3rem;">Welcome to InterviewAgent</div>
+      <p style="color: var(--muted); margin-bottom: 24px; line-height: 1.7;">
+        Hi, I'm your AI interview coach. I'll ask you technical questions based on
+        your target role, listen to your spoken answers, and give you instant feedback
+        and scores. Let's get started — what's your name?
+      </p>
+
+      <div class="form-group" style="max-width: 360px; margin: 0 auto;">
+        <label for="name-input">Your Name</label>
+        <input type="text" id="name-input" placeholder="e.g. Alex Chen" autofocus />
+      </div>
+
+      <button class="btn btn-primary btn-full mt-16" id="name-continue-btn" type="button" style="max-width: 360px; margin: 16px auto 0;">
+        Continue →
+      </button>
+    </div>
+
+  </section>
 
   <!-- ══════════════════════════════════════════════════════════════════════ -->
   <!-- SETUP SECTION                                                          -->
@@ -38,6 +70,7 @@
         <div class="flex gap-8">
           <input type="text" id="skill-input" placeholder="e.g. Python, System Design…" style="flex:1" />
           <button class="btn btn-ghost" id="add-skill-btn" type="button">Add</button>
+          <button class="btn btn-ghost" id="suggest-skills-btn" type="button" title="AI suggests 5 relevant skills">✨ Suggest</button>
         </div>
         <p class="hint">Press Enter or click Add — at least one skill required</p>
         <div id="skills-tags"></div>
@@ -169,6 +202,45 @@
       <button class="btn btn-primary" id="restart-btn" type="button">
         🔄 Start New Interview
       </button>
+    </div>
+
+  </section>
+
+  <!-- ══════════════════════════════════════════════════════════════════════ -->
+  <!-- DASHBOARD SECTION                                                      -->
+  <!-- ══════════════════════════════════════════════════════════════════════ -->
+  <section id="dashboard-section">
+
+    <div class="card">
+      <div class="card-title">📊 Interview Dashboard</div>
+
+      <!-- Stats row -->
+      <div class="flex gap-16 mb-16 flex-wrap" id="dashboard-stats">
+        <div class="stat-card">
+          <div class="stat-num" id="stat-candidates">—</div>
+          <div class="stat-label">Candidates</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-num" id="stat-sessions">—</div>
+          <div class="stat-label">Sessions</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-num" id="stat-avg">—</div>
+          <div class="stat-label">Avg Score</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-num" id="stat-completed">—</div>
+          <div class="stat-label">Completed</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Candidates list -->
+    <div class="card">
+      <div class="card-title">👥 Candidates</div>
+      <div id="dashboard-candidates">
+        <p class="text-muted">Loading…</p>
+      </div>
     </div>
 
   </section>

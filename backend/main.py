@@ -6,14 +6,16 @@ Run with:
 """
 
 import io
-from fastapi import FastAPI, File, Form, UploadFile, HTTPException
+import base64
+import traceback
+from pathlib import Path
+from fastapi import FastAPI, File, Form, Request, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
-from .interview import start_interview, process_answer, get_status
+from .interview import start_interview, process_answer_audio, get_status
 from .tts import text_to_speech_bytes
-from .stt import transcribe_bytes
 from . import store
 
 app = FastAPI(title="Voice Interview Agent", version="1.0.0")
@@ -27,16 +29,30 @@ app.add_middleware(
 )
 
 
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    traceback.print_exc()
+    return JSONResponse(
+        status_code=500,
+        content={"detail": str(exc)},
+    )
+
+_FRONTEND = Path(__file__).resolve().parent.parent / "frontend"
+
 # ── Request / Response Models ────────────────────────────────────────────────
 
+class RegisterRequest(BaseModel):
+    name: str
+
+
 class StartRequest(BaseModel):
+    candidate_id: int
     role: str
     skills: list[str]
 
 
-class StartResponse(BaseModel):
-    session_id: str
-    question: str
+class SuggestSkillsRequest(BaseModel):
+    role: str
 
 
 # ── Routes ───────────────────────────────────────────────────────────────────
@@ -46,23 +62,52 @@ def health():
     return {"status": "ok"}
 
 
+@app.post("/candidate/register")
+def candidate_register(body: RegisterRequest):
+    """Register a candidate by name. Returns candidate_id."""
+    if not body.name.strip():
+        raise HTTPException(400, "name is required")
+    candidate = store.register_candidate(body.name.strip())
+    return candidate
+
+
+@app.get("/candidate/{candidate_id}/sessions")
+def candidate_sessions(candidate_id: int):
+    """List past interview sessions for a candidate."""
+    return store.get_candidate_sessions(candidate_id)
+
+
+@app.post("/skills/suggest")
+def skills_suggest(body: SuggestSkillsRequest):
+    """Suggest 5 relevant interview skills for a role."""
+    if not body.role.strip():
+        raise HTTPException(400, "role is required")
+    from . import llm
+    skills = llm.suggest_skills(body.role.strip())
+    return {"skills": skills}
+
+
+@app.get("/dashboard/overview")
+def dashboard_overview():
+    """Return all candidates, sessions, scores, and aggregate stats."""
+    from . import db
+    return db.get_dashboard_overview()
+
+
 @app.post("/session/start")
 async def session_start(body: StartRequest):
     """
     Start a new interview session.
-    Returns JSON with session_id + first question text,
-    AND also returns the first question as MP3 audio via a separate field (base64).
+    Uses cached questions if this role+skills combo has been used before.
     """
     if not body.role.strip():
         raise HTTPException(400, "role is required")
     if not body.skills:
         raise HTTPException(400, "at least one skill is required")
 
-    session_id, question = start_interview(body.role.strip(), body.skills)
+    session_id, question = start_interview(body.candidate_id, body.role.strip(), body.skills)
 
-    # Convert question to audio
     audio_bytes = text_to_speech_bytes(question)
-    import base64
     audio_b64 = base64.b64encode(audio_bytes).decode()
 
     return {
@@ -84,6 +129,9 @@ async def session_answer(
       - session_id (str)
       - audio (file: .webm / .wav / .mp3)
 
+    The audio is sent DIRECTLY to the audio-capable LLM (Nemotron) for
+    transcription + evaluation in a single call. No separate STT step.
+
     Returns JSON with evaluation + next question text + audio.
     """
     session = store.get_session(session_id)
@@ -92,23 +140,30 @@ async def session_answer(
     if session["status"] == "complete":
         raise HTTPException(400, "Interview already complete")
 
-    # Read uploaded audio
+    # Read uploaded audio and encode to base64
     audio_bytes = await audio.read()
-    suffix = "." + (audio.filename or "audio.webm").rsplit(".", 1)[-1]
+    audio_b64 = base64.b64encode(audio_bytes).decode()
 
-    # STT
-    transcript = transcribe_bytes(audio_bytes, suffix=suffix)
-    if not transcript:
-        transcript = "[no speech detected]"
+    # Determine audio format from filename/mime
+    filename = audio.filename or "audio.webm"
+    suffix = filename.rsplit(".", 1)[-1].lower()
+    format_map = {
+        "webm": "wav",   # OpenRouter may need wav/mp3; we'll try as-is
+        "wav": "wav",
+        "mp3": "mp3",
+        "ogg": "wav",
+        "m4a": "mp3",
+        "flac": "flac",
+    }
+    audio_format = format_map.get(suffix, "wav")
 
-    # Process answer through state machine
-    result = process_answer(session_id, transcript)
+    # Send audio directly to the audio-capable LLM
+    result = process_answer_audio(session_id, audio_b64, audio_format)
 
     # TTS for next question (if any)
     next_audio_b64 = None
     if result["next_question"]:
         next_audio_bytes = text_to_speech_bytes(result["next_question"])
-        import base64
         next_audio_b64 = base64.b64encode(next_audio_bytes).decode()
 
     return {
@@ -128,5 +183,12 @@ def session_end(session_id: str):
     if not session:
         raise HTTPException(404, "Session not found")
     history = session.get("history", [])
-    store.delete_session(session_id)
+    store.update_session(session_id, {"status": "complete"})
     return {"message": "Session ended", "history": history}
+
+from fastapi.staticfiles import StaticFiles
+app.mount("/", StaticFiles(directory=str(_FRONTEND), html=True), name="frontend")
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("backend.main:app", host="127.0.0.1", port=8000, reload=True)

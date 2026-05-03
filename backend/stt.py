@@ -1,42 +1,59 @@
 """
-stt.py — Speech-to-Text using faster-whisper (local, free)
-Model is loaded once at startup (lazy singleton).
+stt.py — Speech-to-Text using Groq's Whisper API (cloud, free tier)
+No local model download. Audio is sent to Groq and transcript returned.
+Free tier: 28,800 seconds/day (8 hours!)
+Get key at: https://console.groq.com/
 """
 
-import io
-import tempfile
 import os
-from faster_whisper import WhisperModel
+import requests
+from dotenv import load_dotenv
 
-_model: WhisperModel | None = None
+load_dotenv()
 
-
-def _get_model() -> WhisperModel:
-    global _model
-    if _model is None:
-        print("[STT] Loading faster-whisper base model (first load may take a moment)...")
-        _model = WhisperModel("base", device="cpu", compute_type="int8")
-        print("[STT] Model loaded.")
-    return _model
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+GROQ_STT_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
+GROQ_MODEL   = "whisper-large-v3-turbo"  # fast + accurate, free tier
 
 
 def transcribe_bytes(audio_bytes: bytes, suffix: str = ".webm") -> str:
     """
-    Transcribe audio from raw bytes.
-    suffix should match the audio format: .webm, .wav, .mp3, etc.
-    Returns the transcribed text string.
+    Send audio bytes to Groq's Whisper API and return the transcript.
+    suffix: file extension hint, e.g. '.webm', '.wav', '.mp3'
     """
-    model = _get_model()
+    if not GROQ_API_KEY:
+        raise RuntimeError(
+            "GROQ_API_KEY not set in .env — get a free key at https://console.groq.com/"
+        )
 
-    # Write to a temp file because faster-whisper needs a file path
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-        tmp.write(audio_bytes)
-        tmp_path = tmp.name
+    # Map suffix to a mime type Groq accepts
+    mime_map = {
+        ".webm": "audio/webm",
+        ".wav":  "audio/wav",
+        ".mp3":  "audio/mpeg",
+        ".ogg":  "audio/ogg",
+        ".mp4":  "audio/mp4",
+        ".m4a":  "audio/mp4",
+        ".flac": "audio/flac",
+    }
+    mime = mime_map.get(suffix.lower(), "audio/webm")
+    filename = f"audio{suffix}"
 
-    try:
-        segments, info = model.transcribe(tmp_path, beam_size=5)
-        text = " ".join(seg.text.strip() for seg in segments).strip()
-        print(f"[STT] Detected language: {info.language} | Transcript: {text!r}")
-        return text
-    finally:
-        os.unlink(tmp_path)
+    resp = requests.post(
+        GROQ_STT_URL,
+        headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
+        files={"file": (filename, audio_bytes, mime)},
+        data={
+            "model": GROQ_MODEL,
+            "response_format": "json",
+            "language": "en",
+        },
+        timeout=30,
+    )
+
+    if resp.status_code != 200:
+        raise RuntimeError(f"Groq STT error {resp.status_code}: {resp.text}")
+
+    transcript = resp.json().get("text", "").strip()
+    print(f"[STT] Groq transcript: {transcript!r}")
+    return transcript
